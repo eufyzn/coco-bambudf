@@ -1,6 +1,6 @@
-// C:\Users\Asus\Desktop\Coco Bambu\src\App.jsx
+// src/App.jsx
 import React, { useState, useEffect } from 'react';
-import db from './services/db';
+import { supabase } from './services/supabase';
 import Login from './components/Login';
 import Sidebar from './components/Sidebar';
 import EmployeeDashboard from './components/EmployeeDashboard';
@@ -17,11 +17,33 @@ export default function App() {
   const [showNotifications, setShowNotifications] = useState(false);
 
   useEffect(() => {
-    // Check local storage for authenticated session
-    const user = db.getCurrentUser();
-    if (user) {
-      setCurrentUser(user);
-    }
+    // Verifica se já existe sessão ativa no Supabase
+    const checkSession = async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session) {
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('*, units(name), departments(name), positions(name)')
+          .eq('id', session.user.id)
+          .single();
+        if (profile && profile.status === 'active') {
+          setCurrentUser(profile);
+        }
+      }
+    };
+    checkSession();
+
+    // Listener para mudanças de estado de autenticação (login/logout)
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(
+      async (event, session) => {
+        if (event === 'SIGNED_OUT' || !session) {
+          setCurrentUser(null);
+          setCurrentTab('dashboard');
+        }
+      }
+    );
+
+    return () => subscription.unsubscribe();
   }, []);
 
   useEffect(() => {
@@ -30,9 +52,13 @@ export default function App() {
     }
   }, [currentUser]);
 
-  const loadNotifications = () => {
-    const list = db.getAll('notifications').filter(n => n.user_id === currentUser.id);
-    setNotifications(list);
+  const loadNotifications = async () => {
+    const { data } = await supabase
+      .from('notifications')
+      .select('*')
+      .eq('user_id', currentUser.id)
+      .order('created_at', { ascending: false });
+    setNotifications(data || []);
   };
 
   const handleLoginSuccess = (user) => {
@@ -40,8 +66,8 @@ export default function App() {
     setCurrentTab('dashboard'); // default starting tab
   };
 
-  const handleLogout = () => {
-    db.logout();
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
     setCurrentUser(null);
     setCurrentTab('dashboard');
   };

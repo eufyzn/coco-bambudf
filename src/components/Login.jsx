@@ -1,6 +1,6 @@
-// C:\Users\Asus\Desktop\Coco Bambu\src\components\Login.jsx
+// src/components/Login.jsx
 import React, { useState } from 'react';
-import { db } from '../services/db';
+import { supabase } from '../services/supabase';
 import { 
   Mail, 
   Lock, 
@@ -31,7 +31,7 @@ export default function Login({ onLoginSuccess }) {
   const [forgotEmail, setForgotEmail] = useState('');
   const [forgotStatus, setForgotStatus] = useState({ success: false, message: '' });
 
-  const handleLogin = (e) => {
+  const handleLogin = async (e) => {
     e.preventDefault();
     if (!email || !password) {
       setErrorMessage('Por favor, insira e-mail e senha.');
@@ -41,31 +41,61 @@ export default function Login({ onLoginSuccess }) {
     setLoading(true);
     setErrorMessage('');
 
-    setTimeout(() => {
-      const res = db.login(email, password);
-      setLoading(false);
-      if (res.success) {
-        onLoginSuccess(res.user);
-      } else {
-        setErrorMessage(res.message);
-      }
-    }, 800); // micro-delay for premium feel
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email: email.trim().toLowerCase(),
+      password,
+    });
+
+    setLoading(false);
+
+    if (error) {
+      setErrorMessage('E-mail ou senha inválidos.');
+      return;
+    }
+
+    // Busca perfil completo do funcionário na tabela profiles
+    const { data: profile, error: profileError } = await supabase
+      .from('profiles')
+      .select('*, units(name), departments(name), positions(name)')
+      .eq('id', data.user.id)
+      .single();
+
+    if (profileError || !profile) {
+      setErrorMessage('Perfil não encontrado. Contate o administrador.');
+      await supabase.auth.signOut();
+      return;
+    }
+
+    if (profile.status !== 'active') {
+      setErrorMessage('Usuário inativo. Contate o administrador.');
+      await supabase.auth.signOut();
+      return;
+    }
+
+    onLoginSuccess(profile);
   };
 
-  const handleForgotPassword = (e) => {
+  const handleForgotPassword = async (e) => {
     e.preventDefault();
     if (!forgotEmail) {
       setForgotStatus({ success: false, message: 'Digite seu e-mail.' });
       return;
     }
 
-    const res = db.resetPassword(forgotEmail);
-    setForgotStatus({ success: res.success, message: res.message });
+    const { error } = await supabase.auth.resetPasswordForEmail(forgotEmail.trim().toLowerCase(), {
+      redirectTo: window.location.origin,
+    });
+
+    if (error) {
+      setForgotStatus({ success: false, message: 'E-mail não cadastrado no sistema.' });
+    } else {
+      setForgotStatus({ success: true, message: `Link de recuperação enviado para ${forgotEmail}.` });
+    }
   };
 
   const handleQuickLogin = (roleEmail) => {
     setEmail(roleEmail);
-    setPassword('123');
+    setPassword(''); // Limpa - no Supabase a senha real deve ser digitada
     setShowDemoPanel(false);
   };
 
